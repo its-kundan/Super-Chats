@@ -10,11 +10,21 @@ export const signup = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Please provide a valid email address" });
+    }
+
     if (password.length < 6) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
-    const user = await User.findOne({ email });
+    if (fullName.trim().length < 2) {
+      return res.status(400).json({ message: "Full name must be at least 2 characters" });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
 
     if (user) return res.status(400).json({ message: "Email already exists" });
 
@@ -22,8 +32,8 @@ export const signup = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const newUser = new User({
-      fullName,
-      email,
+      fullName: fullName.trim(),
+      email: email.toLowerCase(),
       password: hashedPassword,
     });
 
@@ -42,7 +52,7 @@ export const signup = async (req, res) => {
       res.status(400).json({ message: "Invalid user data" });
     }
   } catch (error) {
-    console.log("Error in signup controller", error.message);
+    console.error("Error in signup controller", error.message);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
@@ -50,7 +60,11 @@ export const signup = async (req, res) => {
 export const login = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const user = await User.findOne({ email });
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
       return res.status(400).json({ message: "Invalid credentials" });
@@ -70,17 +84,22 @@ export const login = async (req, res) => {
       profilePic: user.profilePic,
     });
   } catch (error) {
-    console.log("Error in login controller", error.message);
+    console.error("Error in login controller", error.message);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
 export const logout = (req, res) => {
   try {
-    res.cookie("jwt", "", { maxAge: 0 });
+    res.cookie("jwt", "", { 
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.NODE_ENV !== "development"
+    });
     res.status(200).json({ message: "Logged out successfully" });
   } catch (error) {
-    console.log("Error in logout controller", error.message);
+    console.error("Error in logout controller", error.message);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
@@ -94,16 +113,32 @@ export const updateProfile = async (req, res) => {
       return res.status(400).json({ message: "Profile pic is required" });
     }
 
-    const uploadResponse = await cloudinary.uploader.upload(profilePic);
+    // Validate that profilePic is a valid base64 or URL
+    if (!profilePic.startsWith('data:image/') && !profilePic.startsWith('http')) {
+      return res.status(400).json({ message: "Invalid image format" });
+    }
+
+    let uploadResponse;
+    if (profilePic.startsWith('data:image/')) {
+      uploadResponse = await cloudinary.uploader.upload(profilePic);
+    } else {
+      // If it's already a URL, use it directly
+      uploadResponse = { secure_url: profilePic };
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { profilePic: uploadResponse.secure_url },
       { new: true }
-    );
+    ).select("-password");
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     res.status(200).json(updatedUser);
   } catch (error) {
-    console.log("error in update profile:", error);
+    console.error("Error in update profile:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -112,7 +147,7 @@ export const checkAuth = (req, res) => {
   try {
     res.status(200).json(req.user);
   } catch (error) {
-    console.log("Error in checkAuth controller", error.message);
+    console.error("Error in checkAuth controller", error.message);
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
